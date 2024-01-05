@@ -110,9 +110,16 @@ def save_tex(controller: rd.ReplayController):
 def texture_callback(ctx: qrd.CaptureContext, data):
     global captureCtx
     captureCtx = ctx
-    # save_path = manager.SaveFileName("Save Texture File", "", "*.tga")
-    # if save_path == "":
-    #     return
+    global folderName
+    folderName = os.path.expanduser("~/Pictures")
+
+    folderName = captureCtx.Extensions().OpenDirectoryName(
+        "Save Texture",
+        folderName,
+    )
+    if not folderName:
+        return
+
     ctx.Replay().AsyncInvoke("", save_tex)
 
 
