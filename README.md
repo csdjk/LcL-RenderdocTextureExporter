@@ -20,4 +20,4 @@ then go to the Texture Viewer click the extension icon menu to export the curren
 
 Open the previously selected directory
 
-![image.png](https://s2.loli.net/2024/01/05/cZRvYNG7iFLewoX.png)
+![image.png](https://s2.loli.net/2024/01/05/gpqFHmhxrXyAYcf.png)
