@@ -32,8 +32,8 @@ rd = renderdoc
 ResourceDescription = rd.ResourceDescription
 TextureDescription = rd.ResourceDescription
 
-folderName = r"C:\Users\Administrator\Pictures\Renderdoc"
 captureCtx = None
+folderName = None
 
 
 def textureHasSliceFace(tex: TextureDescription):
@@ -54,11 +54,12 @@ def SaveTexture(resourceId, controller):
     resourceDesc: rd.ResourceDescription = captureCtx.GetResource(resourceId)
     texture: rd.TextureDescription = captureCtx.GetTexture(resourceId)
 
-    filename = resourceDesc.name
-
     eventID = captureCtx.CurSelectedEvent()
     resourceIdStr = str(int(resourceId))
     eventIDStr = str(int(eventID))
+
+    # filename = resourceDesc.name
+    filename = f"{resourceDesc.name}_{resourceIdStr}"
 
     texsave.mip = 0
     texsave.alpha = rd.AlphaMapping.Preserve
@@ -104,26 +105,29 @@ def save_tex(controller: rd.ReplayController):
         for boundResource in sample.resources:
             if not SaveTexture(boundResource.resourceId, controller):
                 break
-    captureCtx.Extensions().MessageDialog(f"导出成功:{folderName}", "Extension message")
+    captureCtx.Extensions().MessageDialog(f"导出成功:{folderName}", "Export Texture")
 
 
 def texture_callback(ctx: qrd.CaptureContext, data):
-    global captureCtx
-    captureCtx = ctx
+    if captureCtx is None:
+        ctx.Extensions().MessageDialog("captureCtx is None", "Export Texture")
+        return
     global folderName
-    folderName = os.path.expanduser("~/Pictures")
-
-    folderName = captureCtx.Extensions().OpenDirectoryName(
+    folderName = ctx.Extensions().OpenDirectoryName(
         "Save Texture",
         folderName,
     )
     if not folderName:
+        ctx.Extensions().MessageDialog(f"取消导出", "Export Texture")
         return
-
     ctx.Replay().AsyncInvoke("", save_tex)
 
 
 def register(version: str, ctx: qrd.CaptureContext):
+    global captureCtx
+    captureCtx = ctx
+    global folderName
+    folderName = os.path.expanduser("~/Pictures")
     ctx.Extensions().RegisterPanelMenu(
         qrd.PanelMenu.TextureViewer, ["Export All Texture"], texture_callback
     )
