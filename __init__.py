@@ -78,36 +78,29 @@ def SaveTexture(resourceId, controller, folderName):
     filename = f"{resourceDesc.name}_{resourceIdStr}"
 
     texsave.mip = 0
+    texsave.slice.depth = 0
     texsave.alpha = rd.AlphaMapping.Preserve
     texsave.destType = rd.FileType.TGA
-    # print(filename)
     folderPath = f"{openDirectory}/{folderName}"
 
     if not os.path.exists(folderPath):
         os.makedirs(folderPath)
 
-    # captureCtx.Extensions().MessageDialog(
-    #     f"cubemap:{texture.arraysize},slice:{texture.depth}"
-    # )
-
     if textureHasSliceFace(texture):
         if texture.cubemap:
             faces = ["X+", "X-", "Y+", "Y-", "Z+", "Z-"]
-            texsave.slice.depth = 0
-            for i in range(6):
+            for i in range(texture.arraysize):
                 texsave.slice.sliceIndex = i
                 outTexPath = f"{folderPath}/{filename}_{faces[i]}.tga"
                 controller.SaveTexture(texsave, outTexPath)
         else:
-            texsave.slice.sliceIndex = 0
             for i in range(texture.depth):
-                texsave.slice.depth = i
+                texsave.slice.sliceIndex = i
                 outTexPath = f"{folderPath}/{filename}_{i}.tga"
                 controller.SaveTexture(texsave, outTexPath)
 
     else:
         texsave.slice.sliceIndex = 0
-        texsave.slice.depth = 0
         outTexPath = f"{folderPath}/{filename}.tga"
         controller.SaveTexture(texsave, outTexPath)
 
