@@ -15,9 +15,8 @@ launch RenderDoc and open the `Extension Manager`
 
 then go to the Texture Viewer click the extension icon menu to export the current all texture files,including all faces of cubemap and all slices of 3D texture.
 
-![image.png](https://s2.loli.net/2024/01/05/Xe7WnGLjhvPD5EU.png)
-
+![image.png](https://s2.loli.net/2024/01/08/pRwxHPnu4VClzm8.png)
 
 Open the previously selected directory
 
-![image.png](https://s2.loli.net/2024/01/05/gpqFHmhxrXyAYcf.png)
+![image.png](https://s2.loli.net/2024/01/08/LHQrsadZIxf3cVD.png)
