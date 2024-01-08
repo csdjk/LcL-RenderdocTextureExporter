@@ -21,7 +21,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 ###############################################################################
-
+from functools import partial
 import os
 import renderdoc
 import qrenderdoc as qrd
@@ -33,7 +33,26 @@ ResourceDescription = rd.ResourceDescription
 TextureDescription = rd.ResourceDescription
 
 captureCtx = None
-folderName = None
+openDirectory = None
+textureCount = 0
+
+
+def get_filename_without_extension(path):
+    base_name = os.path.basename(path)  # 获取文件名，包含扩展名
+    file_name, extension = os.path.splitext(base_name)  # 分割文件名和扩展名
+    return file_name
+
+
+def get_open_directory():
+    global openDirectory
+    openDirectory = captureCtx.Extensions().OpenDirectoryName(
+        "Save Texture",
+        openDirectory,
+    )
+    if not openDirectory:
+        return None
+
+    return openDirectory
 
 
 def textureHasSliceFace(tex: TextureDescription):
@@ -44,7 +63,7 @@ def textureHasMipMap(tex: TextureDescription):
     return not (tex.mips == 1 and tex.msSamp <= 1)
 
 
-def SaveTexture(resourceId, controller):
+def SaveTexture(resourceId, controller, folderName):
     texsave = rd.TextureSave()
 
     texsave.resourceId = resourceId
@@ -54,18 +73,15 @@ def SaveTexture(resourceId, controller):
     resourceDesc: rd.ResourceDescription = captureCtx.GetResource(resourceId)
     texture: rd.TextureDescription = captureCtx.GetTexture(resourceId)
 
-    eventID = captureCtx.CurSelectedEvent()
     resourceIdStr = str(int(resourceId))
-    eventIDStr = str(int(eventID))
 
-    # filename = resourceDesc.name
     filename = f"{resourceDesc.name}_{resourceIdStr}"
 
     texsave.mip = 0
     texsave.alpha = rd.AlphaMapping.Preserve
-    texsave.destType = rd.FileType.PNG
-
-    folderPath = f"{folderName}/{eventIDStr}"
+    texsave.destType = rd.FileType.TGA
+    # print(filename)
+    folderPath = f"{openDirectory}/{folderName}"
 
     if not os.path.exists(folderPath):
         os.makedirs(folderPath)
@@ -95,41 +111,71 @@ def SaveTexture(resourceId, controller):
         outTexPath = f"{folderPath}/{filename}.tga"
         controller.SaveTexture(texsave, outTexPath)
 
+    global textureCount
+    textureCount += 1
     return True
 
 
+# 导出当前Draw的所有Texture
 def save_tex(controller: rd.ReplayController):
+    global textureCount
+    textureCount = 0
+
+    eventID = str(int(captureCtx.CurSelectedEvent()))
     state = controller.GetPipelineState()
     sampleList = state.GetReadOnlyResources(renderdoc.ShaderStage.Fragment)
     for sample in sampleList:
         for boundResource in sample.resources:
-            if not SaveTexture(boundResource.resourceId, controller):
+            if not SaveTexture(boundResource.resourceId, controller, eventID):
                 break
-    captureCtx.Extensions().MessageDialog(f"导出成功:{folderName}", "Export Texture")
+    captureCtx.Extensions().MessageDialog(
+        f"Export Complete,Total {textureCount} textures:{openDirectory}",
+        "Export Texture",
+    )
 
 
 def texture_callback(ctx: qrd.CaptureContext, data):
-    if captureCtx is None:
+    if ctx is None:
         ctx.Extensions().MessageDialog("captureCtx is None", "Export Texture")
         return
-    global folderName
-    folderName = ctx.Extensions().OpenDirectoryName(
-        "Save Texture",
-        folderName,
-    )
-    if not folderName:
-        ctx.Extensions().MessageDialog(f"取消导出", "Export Texture")
-        return
+    get_open_directory()
     ctx.Replay().AsyncInvoke("", save_tex)
+
+
+# 导出所有Texture
+def save_all_tex(controller: rd.ReplayController):
+    name = captureCtx.GetCaptureFilename()
+    name = get_filename_without_extension(name)
+
+    global textureCount
+    textureCount = 0
+    for tex in captureCtx.GetTextures():
+        if not SaveTexture(tex.resourceId, controller, name):
+            break
+    captureCtx.Extensions().MessageDialog(
+        f"Export Complete,Total {textureCount} textures:{openDirectory}",
+        "Export Texture",
+    )
+
+
+def texture_all_callback(ctx: qrd.CaptureContext, data):
+    if ctx is None:
+        ctx.Extensions().MessageDialog("captureCtx is None", "Export Texture")
+        return
+    get_open_directory()
+    ctx.Replay().AsyncInvoke("", save_all_tex)
 
 
 def register(version: str, ctx: qrd.CaptureContext):
     global captureCtx
     captureCtx = ctx
-    global folderName
-    folderName = os.path.expanduser("~/Pictures")
+    global openDirectory
+    openDirectory = os.path.expanduser("~/Pictures")
     ctx.Extensions().RegisterPanelMenu(
-        qrd.PanelMenu.TextureViewer, ["Export All Texture"], texture_callback
+        qrd.PanelMenu.TextureViewer, ["Export All Texture"], texture_all_callback
+    )
+    ctx.Extensions().RegisterPanelMenu(
+        qrd.PanelMenu.TextureViewer, ["Export Draw Texture"], texture_callback
     )
 
 
