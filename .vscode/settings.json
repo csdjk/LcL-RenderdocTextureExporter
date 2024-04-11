@@ -20,5 +20,8 @@
         "activityBar.background": "#03351C",
         "titleBar.activeBackground": "#054B27",
         "titleBar.activeForeground": "#ECFEF5"
-    }
+    },
+    "cSpell.words": [
+        "qrenderdoc"
+    ]
 }
