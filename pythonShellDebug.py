@@ -53,8 +53,8 @@ def SaveTexture(resourceId, controller, folderName, texName=""):
     if texture.width <= 4 and texture.height <= 4:
         return False
 
-    print(texture.format.Name())
-    print(resourceDesc.name)
+    # print(texture.format.Name())
+    # print(resourceDesc.name)
     resourceIdStr = str(int(resourceId))
 
     # filename = f"{texName}_{resourceIdStr}"
@@ -91,6 +91,7 @@ def SaveTexture(resourceId, controller, folderName, texName=""):
     else:
         texsave.slice.sliceIndex = 0
         outTexPath = f"{folderPath}/{filename}{texFormat}"
+        print(f"outTexPath:{ outTexPath}")
         controller.SaveTexture(texsave, outTexPath)
 
     global textureCount
@@ -130,16 +131,25 @@ def save_tex(controller: rd.ReplayController):  # type: ignore
     state: rd.PipeState = controller.GetPipelineState()
 
     # # 获取片元着色器的资源
-    sampleList: List[rd.BoundResourceArray] = state.GetReadOnlyResources(
-        renderdoc.ShaderStage.Fragment
+    useDescriptorList: List[rd.UsedDescriptor] = state.GetReadOnlyResources(
+        rd.ShaderStage.Fragment
     )
-    for sample in sampleList:
-        print(f"sample: { len(sample.resources)}-----------------------")
-        name = BoundResourceName(state, sample.bindPoint)
-        for boundResource in sample.resources:
-            boundResource: rd.BoundResource  # type: ignore
-            if not SaveTexture(boundResource.resourceId, controller, eventID, name):
-                break
+    
+    for useDescriptor in useDescriptorList:
+        # v 1.35+ 
+        descriptor = useDescriptor.descriptor
+        # print(descriptor)
+        # print(f"sample: { descriptor.resource}-----------------------")
+        # name = BoundResourceName(state, sample.bindPoint)
+        name = str(int(descriptor.resource))
+        SaveTexture(descriptor.resource, controller, eventID, name)
+        
+        # 低版本
+        # for boundResource in sample.resources:
+        #     boundResource: rd.BoundResource  # type: ignore
+        #     if not SaveTexture(boundResource.resourceId, controller, eventID, name):
+        #         break
+            
     captureCtx.Extensions().MessageDialog(
         f"Export Complete,Total {textureCount} textures:{openDirectory}",
         "Export Texture",
@@ -191,7 +201,8 @@ def register(version: str, ctx: qrd.CaptureContext):
     #     qrd.PanelMenu.TextureViewer, ["Export Texture All"], texture_all_callback
     # )
 
-    texture_callback(ctx, None)
+    # texture_callback(ctx, None)
+    texture_all_callback(ctx, None)
 
 
 if "pyrenderdoc" in globals():

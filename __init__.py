@@ -153,16 +153,21 @@ def save_tex(controller: rd.ReplayController):
     state: rd.PipeState = controller.GetPipelineState()
 
     # # 获取片元着色器的资源
-    sampleList: List[rd.BoundResourceArray] = state.GetReadOnlyResources(
+    useDescriptorList: List[rd.UsedDescriptor] = state.GetReadOnlyResources(
         renderdoc.ShaderStage.Fragment
     )
-    for sample in sampleList:
-        print(f"sample: { len(sample.resources)}-----------------------")
-        name = BoundResourceName(state, sample.bindPoint)
-        for boundResource in sample.resources:
-            boundResource: rd.BoundResource
-            if not SaveTexture(boundResource.resourceId, controller, eventID, name):
-                break
+    for useDescriptor in useDescriptorList:
+         # v 1.35+ 
+        descriptor = useDescriptor.descriptor
+        name = str(int(descriptor.resource))
+        SaveTexture(descriptor.resource, controller, eventID, name)
+        
+        # 低版本
+        # name = BoundResourceName(state, sample.bindPoint)
+        # for boundResource in sample.resources:
+        #     boundResource: rd.BoundResource
+        #     if not SaveTexture(boundResource.resourceId, controller, eventID, name):
+        #         break
     captureCtx.Extensions().MessageDialog(
         f"Export Complete,Total {textureCount} textures:{openDirectory}",
         "Export Texture",
