@@ -1,25 +1,20 @@
 import sys
-
-# Import renderdoc if not already imported (e.g. in the UI)
-if 'renderdoc' not in sys.modules and '_renderdoc' not in sys.modules:
-	import renderdoc
-
-# Alias renderdoc for legibility
+import renderdoc
 rd = renderdoc
 
+
 def iterAction(d, controller, indent=''):
-    # 打印 action 基本信息
-    print('%s%d: %s' % (indent, d.eventId, d.GetName(controller.GetStructuredFile())))
+    print('%s%d-%d: %s' % (indent, d.eventId,d.actionId, d.GetName(controller.GetStructuredFile())))
     # 判断是否是绘制调用
     if d.flags & rd.ActionFlags.Drawcall:
         if d.flags & rd.ActionFlags.Indexed:
-            print('%s    Index drawing: Index=%d ' % (indent, d.numIndices))
+            print('%s    Index drawing: Index=%d trs=%d' % (indent, d.numIndices, d.numIndices/3))
     # 递归子 action
     for c in d.children:
         iterAction(c, controller, indent + '    ')
         
 
-def sampleCode(controller):
+def foreachActions(controller):
 	# Iterate over all of the root actions
 	for d in controller.GetRootActions():
 		iterAction(d,controller)
@@ -61,5 +56,3 @@ def sampleCode(controller):
 	if inpass:
 		print("Pass #%d contained %d actions" % (passnum, passcontents))
 
-if 'pyrenderdoc' in globals():
-	pyrenderdoc.Replay().BlockInvoke(sampleCode)
