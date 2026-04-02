@@ -105,6 +105,33 @@ class TextureExporter:
         self.texture_count += 1
         return True
     
+    def build_slot_name_map(self, state: rd.PipeState) -> dict:
+        """
+        构建 (reg, space) -> (slot_index, shader_var_name) 的映射表，
+        对应 Inputs 面板中的 'FS {slot} {varName}' 标签。
+        """
+        slot_map = {}
+        refl: rd.ShaderReflection = state.GetShaderReflection(rd.ShaderStage.Fragment)
+        mapping: rd.ShaderBindpointMapping = state.GetBindpointMapping(rd.ShaderStage.Fragment)
+
+        if refl is None or mapping is None:
+            return slot_map
+
+        bind_points: List[rd.Bindpoint] = mapping.readOnlyResources
+
+        for res in refl.readOnlyResources:
+            res: rd.ShaderResource
+            bp_idx = res.bindPoint
+            if bp_idx < 0 or bp_idx >= len(bind_points):
+                continue
+            bp: rd.Bindpoint = bind_points[bp_idx]
+            if not bp.used:
+                continue
+            # 以 (reg, space) 为 key，方便后面用 used_descriptor 查找
+            slot_map[(bp.bind, bp.arraySize)] = (bp_idx, res.name)
+
+        return slot_map
+
     def bound_resource_name(self, state: rd.PipeState, bind_point):
         refl: rd.ShaderReflection = state.GetShaderReflection(rd.ShaderStage.Fragment)
         mapping: rd.ShaderBindpointMapping = state.GetBindpointMapping(
@@ -125,7 +152,7 @@ class TextureExporter:
                 return res.name
 
         return ""
-    
+
     # 导出当前Draw的所有Texture
     def save_current_draw_textures(self, controller: rd.ReplayController):
         self.texture_count = 0
@@ -133,16 +160,28 @@ class TextureExporter:
         event_id = str(int(self.capture_ctx.CurSelectedEvent()))
         state: rd.PipeState = controller.GetPipelineState()
 
-        # 获取片元着色器的资源
+        # 通过 ShaderReflection 构建 slot索引 -> shader变量名 映射
+        # refl.readOnlyResources 的枚举顺序与 Pipeline State 面板 Textures/Slot 列表一致
+        refl: rd.ShaderReflection = state.GetShaderReflection(rd.ShaderStage.Fragment)
+        # slot_idx -> var_name，直接用枚举索引，不依赖 bindPoint 字段
+        slot_var_map = {}
+        if refl is not None:
+            for slot_idx, res in enumerate(refl.readOnlyResources):
+                res: rd.ShaderResource
+                slot_var_map[slot_idx] = res.name
+                print(f"ShaderResource: slot={slot_idx}, name={res.name}")
+
+        # 获取片元着色器绑定的资源列表（顺序对应 Inputs 面板从左到右）
         used_descriptor_list: List[rd.UsedDescriptor] = state.GetReadOnlyResources(
             rd.ShaderStage.Fragment
         )
-        for used_descriptor in used_descriptor_list:
-            # v 1.35+ 
+        for slot_idx, used_descriptor in enumerate(used_descriptor_list):
+            # v 1.35+
             descriptor = used_descriptor.descriptor
-            name = str(int(descriptor.resource))
-            self.save_texture(descriptor.resource, controller, event_id, name)
-            
+            var_name = slot_var_map.get(slot_idx, "")
+            slot_name = var_name if var_name else f"FS{slot_idx}"
+            self.save_texture(descriptor.resource, controller, event_id, slot_name)
+
             # 低版本
             # name = self.bound_resource_name(state, sample.bindPoint)
             # for boundResource in sample.resources:
@@ -150,7 +189,18 @@ class TextureExporter:
             #     if not self.save_texture(boundResource.resourceId, controller, event_id, name):
             #         break
                 
-        self.capture_ctx.Extensions().MessageDialog(
-            f"Export Complete,Total {self.texture_count} textures:{self.open_directory}",
-            "Export Texture",
-        )
+        count = self.texture_count
+        save_dir = self.open_directory
+        export_folder = f"{save_dir}/{event_id}"
+
+        def on_export_done():
+            self.capture_ctx.Extensions().MessageDialog(
+                f"Export Complete, Total {count} textures: {export_folder}",
+                "Export Texture",
+            )
+            # 打开导出目录
+            import subprocess
+            subprocess.Popen(f'explorer "{os.path.normpath(export_folder)}"')
+
+        # UI 操作必须在主线程调用，否则会死锁
+        self.capture_ctx.Extensions().RunInUIThread(on_export_done)
