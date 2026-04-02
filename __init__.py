@@ -64,10 +64,11 @@ def all_texture_callback(ctx: qrd.CaptureContext, data):
         name = get_filename_without_extension(name)
 
         count = TextureSaver.export_all_textures(ctx, controller, name)
-        ctx.Extensions().MessageDialog(
-            f"导出完成，共导出 {count} 张纹理到：{os.path.join(open_dir, name)}",
-            "导出纹理",
-        )
+        # 不在 Replay 线程调用 MessageDialog（会死锁），改用 print 输出日志
+        export_path = os.path.join(open_dir, name)
+        print(f"导出完成，共导出 {count} 张纹理到：{export_path}")
+        import subprocess
+        subprocess.Popen(f'explorer "{os.path.normpath(export_path)}"')
 
     ctx.Replay().AsyncInvoke("", do_export)
 

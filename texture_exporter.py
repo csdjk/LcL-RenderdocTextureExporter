@@ -193,14 +193,8 @@ class TextureExporter:
         save_dir = self.open_directory
         export_folder = f"{save_dir}/{event_id}"
 
-        def on_export_done():
-            self.capture_ctx.Extensions().MessageDialog(
-                f"Export Complete, Total {count} textures: {export_folder}",
-                "Export Texture",
-            )
-            # 打开导出目录
-            import subprocess
-            subprocess.Popen(f'explorer "{os.path.normpath(export_folder)}"')
-
-        # UI 操作必须在主线程调用，否则会死锁
-        self.capture_ctx.Extensions().RunInUIThread(on_export_done)
+        # 导出完成：在 Replay 线程中只做非阻塞操作，不调用 MessageDialog（会死锁）
+        print(f"Export Complete, Total {count} textures: {export_folder}")
+        # 用 subprocess 打开目录（非阻塞，不会死锁）
+        import subprocess
+        subprocess.Popen(f'explorer "{os.path.normpath(export_folder)}"')
