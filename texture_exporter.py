@@ -22,179 +22,80 @@
 # THE SOFTWARE.
 ###############################################################################
 import os
+import subprocess
 import renderdoc as rd
-from typing import List, Optional
+from typing import List
+
+from .utils import TextureSaver
+
 
 class TextureExporter:
     def __init__(self, capture_ctx):
         self.capture_ctx = capture_ctx
         self.open_directory = os.path.expanduser("~/Pictures")
-        self.texture_count = 0
-    
 
-    
     def get_open_directory(self):
-        self.open_directory = self.capture_ctx.Extensions().OpenDirectoryName(
+        selected = self.capture_ctx.Extensions().OpenDirectoryName(
             "Save Texture",
             self.open_directory,
         )
-        if not self.open_directory:
+        if not selected:
             return None
-
+        self.open_directory = selected
         return self.open_directory
-    
-    def texture_has_slice_face(self, tex: rd.ResourceDescription):
-        return tex.arraysize > 1 or tex.depth > 1
 
-    def texture_has_mip_map(self, tex: rd.ResourceDescription):
-        return not (tex.mips == 1 and tex.msSamp <= 1)
-    
-    def save_texture(self, resource_id, controller, folder_name, tex_name=""):
-        texsave = rd.TextureSave()
-
-        texsave.resourceId = resource_id
-        if texsave.resourceId == rd.ResourceId.Null():
-            return False
-
-        resource_desc: rd.ResourceDescription = self.capture_ctx.GetResource(resource_id)
-        texture: rd.TextureDescription = self.capture_ctx.GetTexture(resource_id)
-        # 小于4x4的纹理不导出,一般都是空白纹理
-        if texture.width <= 4 and texture.height <= 4:
-            return False
-
-        print(texture.format.Name())
-        print(resource_desc.name)
-        resource_id_str = str(int(resource_id))
-
-        # filename = f"{tex_name}_{resource_id_str}"
-        filename = f"{tex_name}"
-
-        texsave.mip = 0
-        texsave.slice.depth = 0
-        texsave.alpha = rd.AlphaMapping.Preserve
-
-        tex_format = ".tga"
-        texsave.destType = rd.FileType.TGA
-        if texture.format.compType == rd.CompType.Float:
-            texsave.destType = rd.FileType.EXR
-            tex_format = ".exr"
-
-        folder_path = f"{self.open_directory}/{folder_name}"
-
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-
-        if self.texture_has_slice_face(texture):
-            if texture.cubemap:
-                faces = ["X+", "X-", "Y+", "Y-", "Z+", "Z-"]
-                for i in range(texture.arraysize):
-                    texsave.slice.sliceIndex = i
-                    out_tex_path = f"{folder_path}/{filename}_{faces[i]}{tex_format}"
-                    controller.SaveTexture(texsave, out_tex_path)
-            else:
-                for i in range(texture.depth):
-                    texsave.slice.sliceIndex = i
-                    out_tex_path = f"{folder_path}/{filename}_{i}{tex_format}"
-                    controller.SaveTexture(texsave, out_tex_path)
-
-        else:
-            texsave.slice.sliceIndex = 0
-            out_tex_path = f"{folder_path}/{filename}{tex_format}"
-            controller.SaveTexture(texsave, out_tex_path)
-
-        self.texture_count += 1
-        return True
-    
-    def build_slot_name_map(self, state: rd.PipeState) -> dict:
+    def _build_slot_var_map(self, state: rd.PipeState) -> dict:
         """
-        构建 (reg, space) -> (slot_index, shader_var_name) 的映射表，
-        对应 Inputs 面板中的 'FS {slot} {varName}' 标签。
+        通过 ShaderReflection 枚举顺序构建 slot_idx -> shader 变量名 的映射。
+        refl.readOnlyResources 的枚举顺序与 GetReadOnlyResources 返回列表顺序一致。
         """
         slot_map = {}
         refl: rd.ShaderReflection = state.GetShaderReflection(rd.ShaderStage.Fragment)
-        mapping: rd.ShaderBindpointMapping = state.GetBindpointMapping(rd.ShaderStage.Fragment)
-
-        if refl is None or mapping is None:
+        if refl is None:
             return slot_map
-
-        bind_points: List[rd.Bindpoint] = mapping.readOnlyResources
-
-        for res in refl.readOnlyResources:
-            res: rd.ShaderResource
-            bp_idx = res.bindPoint
-            if bp_idx < 0 or bp_idx >= len(bind_points):
-                continue
-            bp: rd.Bindpoint = bind_points[bp_idx]
-            if not bp.used:
-                continue
-            # 以 (reg, space) 为 key，方便后面用 used_descriptor 查找
-            slot_map[(bp.bind, bp.arraySize)] = (bp_idx, res.name)
-
+        for slot_idx, res in enumerate(refl.readOnlyResources):
+            slot_map[slot_idx] = res.name
         return slot_map
 
-    def bound_resource_name(self, state: rd.PipeState, bind_point):
-        refl: rd.ShaderReflection = state.GetShaderReflection(rd.ShaderStage.Fragment)
-        mapping: rd.ShaderBindpointMapping = state.GetBindpointMapping(
-            rd.ShaderStage.Fragment
-        )
-        map_list: List[rd.Bindpoint] = mapping.readOnlyResources
-
-        try:
-            idx = map_list.index(bind_point)
-        except:
-            print(f"not found bindPoint:{bind_point.bind}")
-            return ""
-
-        for res in refl.readOnlyResources:
-            res: rd.ShaderResource
-            if res.bindPoint == idx:
-                print(f"{res.name}: bindPoint:{bind_point.bind}")
-                return res.name
-
-        return ""
-
-    # 导出当前Draw的所有Texture
+    # 导出当前 DrawCall 绑定的所有 Fragment Shader 输入纹理
     def save_current_draw_textures(self, controller: rd.ReplayController):
-        self.texture_count = 0
-
         event_id = str(int(self.capture_ctx.CurSelectedEvent()))
         state: rd.PipeState = controller.GetPipelineState()
 
-        # 通过 ShaderReflection 构建 slot索引 -> shader变量名 映射
-        # refl.readOnlyResources 的枚举顺序与 Pipeline State 面板 Textures/Slot 列表一致
-        refl: rd.ShaderReflection = state.GetShaderReflection(rd.ShaderStage.Fragment)
-        # slot_idx -> var_name，直接用枚举索引，不依赖 bindPoint 字段
-        slot_var_map = {}
-        if refl is not None:
-            for slot_idx, res in enumerate(refl.readOnlyResources):
-                res: rd.ShaderResource
-                slot_var_map[slot_idx] = res.name
-                print(f"ShaderResource: slot={slot_idx}, name={res.name}")
+        # slot_idx -> shader 变量名（枚举顺序与 GetReadOnlyResources 一致）
+        slot_var_map = self._build_slot_var_map(state)
 
-        # 获取片元着色器绑定的资源列表（顺序对应 Inputs 面板从左到右）
+        # 获取 Fragment Shader 绑定的所有只读资源
         used_descriptor_list: List[rd.UsedDescriptor] = state.GetReadOnlyResources(
             rd.ShaderStage.Fragment
         )
+
+        folder_path = os.path.join(self.open_directory, event_id)
+
+        # 检测重名：记录每个文件名出现的次数，重名时自动追加 _1/_2 后缀
+        name_counter: dict = {}
+        texture_count = 0
+
         for slot_idx, used_descriptor in enumerate(used_descriptor_list):
-            # v 1.35+
             descriptor = used_descriptor.descriptor
-            var_name = slot_var_map.get(slot_idx, "")
-            slot_name = var_name if var_name else f"FS{slot_idx}"
-            self.save_texture(descriptor.resource, controller, event_id, slot_name)
+            var_name = slot_var_map.get(slot_idx, f"FS{slot_idx}")
 
-            # 低版本
-            # name = self.bound_resource_name(state, sample.bindPoint)
-            # for boundResource in sample.resources:
-            #     boundResource: rd.BoundResource
-            #     if not self.save_texture(boundResource.resourceId, controller, event_id, name):
-            #         break
-                
-        count = self.texture_count
-        save_dir = self.open_directory
-        export_folder = f"{save_dir}/{event_id}"
+            # 处理重名
+            if var_name in name_counter:
+                name_counter[var_name] += 1
+                unique_name = f"{var_name}_{name_counter[var_name]}"
+            else:
+                name_counter[var_name] = 0
+                unique_name = var_name
 
-        # 导出完成：在 Replay 线程中只做非阻塞操作，不调用 MessageDialog（会死锁）
-        print(f"Export Complete, Total {count} textures: {export_folder}")
-        # 用 subprocess 打开目录（非阻塞，不会死锁）
-        import subprocess
-        subprocess.Popen(f'explorer "{os.path.normpath(export_folder)}"')
+            if TextureSaver.save_texture(
+                self.capture_ctx, controller,
+                descriptor.resource, folder_path, unique_name
+            ):
+                texture_count += 1
+
+        # 导出完成日志（不调用 MessageDialog，避免 Replay 线程死锁）
+        print(f"[TextureExporter] Export Complete — EventID={event_id}, "
+              f"Total={texture_count} textures -> {folder_path}")
+        # 打开导出目录（非阻塞）
+        subprocess.Popen(f'explorer "{os.path.normpath(folder_path)}"')

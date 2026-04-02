@@ -21,10 +21,11 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 ###############################################################################
+import os
+import subprocess
 import qrenderdoc as qrd
 from .texture_exporter import TextureExporter
 from .drawcall_statistics import window_callback
-import os
 from .utils import TextureSaver, get_filename_without_extension
 
 from .test.test import TestClass
@@ -35,14 +36,14 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "lib"))
 
 
 # 全局实例
-texture_exporter = None
+texture_exporter: TextureExporter = None
 
 
 def texture_callback(ctx: qrd.CaptureContext, data):
     global texture_exporter
 
     if ctx is None:
-        ctx.Extensions().MessageDialog("captureCtx is None", "Export Texture")
+        print("[TextureExporter] Error: captureCtx is None")
         return
 
     if texture_exporter.get_open_directory() is None:
@@ -57,17 +58,14 @@ def all_texture_callback(ctx: qrd.CaptureContext, data):
     )
     if not open_dir:
         return
-    TextureSaver.open_directory = open_dir  # 设置全局变量
 
     def do_export(controller):
-        name = ctx.GetCaptureFilename()
-        name = get_filename_without_extension(name)
-
-        count = TextureSaver.export_all_textures(ctx, controller, name)
-        # 不在 Replay 线程调用 MessageDialog（会死锁），改用 print 输出日志
+        name = get_filename_without_extension(ctx.GetCaptureFilename())
+        count = TextureSaver.export_all_textures(ctx, controller, open_dir, name)
         export_path = os.path.join(open_dir, name)
-        print(f"导出完成，共导出 {count} 张纹理到：{export_path}")
-        import subprocess
+        # 不在 Replay 线程调用 MessageDialog（会死锁），改用 print 输出日志
+        print(f"[TextureExporter] 导出完成 — 共 {count} 张纹理 -> {export_path}")
+        # 打开导出目录（非阻塞）
         subprocess.Popen(f'explorer "{os.path.normpath(export_path)}"')
 
     ctx.Replay().AsyncInvoke("", do_export)
@@ -83,7 +81,6 @@ def reload_plugin_callback(ctx: qrd.CaptureContext, data):
     if loadstr:
         ctx.Extensions().MessageDialog(loadstr, "插件重载失败")
     else:
-        # ctx.Extensions().MessageDialog("插件重载完成", "重载插件")
         print("插件重载完成 LcL-RenderdocTextureExporter")
 
 

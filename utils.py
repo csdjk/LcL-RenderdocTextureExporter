@@ -25,8 +25,11 @@ OUTPUT_RESOURCE_USAGES = [
     ResourceUsage.DepthStencilTarget,
 ]
 
+# Cube Map 面名称
+CUBE_FACE_NAMES = ["X+", "X-", "Y+", "Y-", "Z+", "Z-"]
 
-def get_filename_without_extension( path):
+
+def get_filename_without_extension(path):
     base_name = os.path.basename(path)  # 获取文件名，包含扩展名
     file_name, extension = os.path.splitext(base_name)  # 分割文件名和扩展名
     return file_name
@@ -259,14 +262,28 @@ class ControllerDataStats:
 # print(stats.get_outputs_in_range(100, 110))
 
 
+def _resolve_tex_format(texture: rd.TextureDescription):
+    """根据纹理格式返回 (FileType, 后缀) 元组"""
+    if texture.format.compType == rd.CompType.Float:
+        return rd.FileType.EXR, ".exr"
+    return rd.FileType.TGA, ".tga"
+
+
+def _safe_tex_name(name: str) -> str:
+    """将 shader 变量名中的非法文件名字符替换为下划线"""
+    invalid = r'\/:*?"<>|'
+    for ch in invalid:
+        name = name.replace(ch, "_")
+    return name
+
+
 class TextureSaver:
     """
     纹理导出工具类，封装了导出单个纹理的核心逻辑。
     """
-    open_directory = None 
 
     @staticmethod
-    def is_renderbuffer(texture):
+    def is_renderbuffer(texture: rd.TextureDescription) -> bool:
         """判断一个纹理是否为渲染缓冲区（ColorTarget 或 DepthTarget）"""
         if texture is None:
             return False
@@ -274,15 +291,22 @@ class TextureSaver:
         return (flags & rd.TextureCategory.ColorTarget) != 0 or (flags & rd.TextureCategory.DepthTarget) != 0
 
     @staticmethod
-    def texture_has_slice_face(tex: rd.ResourceDescription):
+    def texture_has_slice_face(tex) -> bool:
         return tex.arraysize > 1 or tex.depth > 1
 
     @staticmethod
-    def texture_has_mip_map(tex: rd.ResourceDescription):
-        return not (tex.mips == 1 and tex.msSamp <= 1)
-
-    @staticmethod
-    def save_texture(capture_ctx, controller, resource_id, folder_name, tex_name="",export_rebuffer=False):
+    def save_texture(capture_ctx, controller, resource_id, folder_path: str,
+                     tex_name: str = "", export_renderbuffer: bool = False) -> bool:
+        """
+        导出单张纹理到 folder_path 目录。
+        :param capture_ctx:         RenderDoc CaptureContext
+        :param controller:          ReplayController
+        :param resource_id:         纹理资源 ID
+        :param folder_path:         目标目录（完整路径，已包含子目录）
+        :param tex_name:            输出文件名（不含扩展名）；空字符串时自动用资源名或 ID
+        :param export_renderbuffer: 是否导出 RenderBuffer（ColorTarget/DepthTarget）
+        :return: 导出成功返回 True
+        """
         texsave = rd.TextureSave()
         texsave.resourceId = resource_id
         if texsave.resourceId == rd.ResourceId.Null():
@@ -290,78 +314,78 @@ class TextureSaver:
 
         resource_desc: rd.ResourceDescription = capture_ctx.GetResource(resource_id)
         texture: rd.TextureDescription = capture_ctx.GetTexture(resource_id)
-        
-        # 根据export_rebuffer参数判断是否导出renderbuffer
-        if not export_rebuffer and TextureSaver.is_renderbuffer(texture):
+
+        if texture is None:
             return False
-        
-        # 小于4x4的纹理不导出,一般都是空白纹理
+
+        # 是否跳过 renderbuffer
+        if not export_renderbuffer and TextureSaver.is_renderbuffer(texture):
+            return False
+
+        # 小于 4x4 的纹理跳过（通常是占位空白纹理）
         if texture.width <= 4 and texture.height <= 4:
             return False
 
-        filename = f"{tex_name}"
+        # 文件名：优先用传入名称，否则用资源名称，最后用 ID
+        if not tex_name:
+            tex_name = resource_desc.name if (resource_desc and resource_desc.name) else str(int(resource_id))
+        filename = _safe_tex_name(tex_name)
+
         texsave.mip = 0
         texsave.slice.depth = 0
         texsave.alpha = rd.AlphaMapping.Preserve
 
-        tex_format = ".tga"
-        texsave.destType = rd.FileType.TGA
-        if texture.format.compType == rd.CompType.Float:
-            texsave.destType = rd.FileType.EXR
-            tex_format = ".exr"
+        file_type, tex_ext = _resolve_tex_format(texture)
+        texsave.destType = file_type
 
-        # 使用类变量 open_directory
-        print(f"open_directory {TextureSaver.open_directory}")
-        if TextureSaver.open_directory:
-            folder_path = os.path.join(TextureSaver.open_directory, folder_name)
-        else:
-            folder_path = os.path.join(
-                capture_ctx.open_directory if hasattr(capture_ctx, "open_directory") else os.path.expanduser("~/Pictures"),
-                folder_name,
-            )
-            
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
+        os.makedirs(folder_path, exist_ok=True)
 
         if TextureSaver.texture_has_slice_face(texture):
             if texture.cubemap:
-                faces = ["X+", "X-", "Y+", "Y-", "Z+", "Z-"]
-                for i in range(texture.arraysize):
+                # Cube Map：每 6 面一组，支持 Cube Array
+                num_faces = texture.arraysize
+                for i in range(num_faces):
+                    face_label = CUBE_FACE_NAMES[i % 6]
+                    layer = i // 6
+                    suffix = f"_{layer}_{face_label}" if num_faces > 6 else f"_{face_label}"
                     texsave.slice.sliceIndex = i
-                    out_tex_path = os.path.join(folder_path, f"{filename}_{faces[i]}{tex_format}")
-                    controller.SaveTexture(texsave, out_tex_path)
+                    out_path = os.path.join(folder_path, f"{filename}{suffix}{tex_ext}")
+                    controller.SaveTexture(texsave, out_path)
             else:
                 for i in range(texture.depth):
                     texsave.slice.sliceIndex = i
-                    out_tex_path = os.path.join(folder_path, f"{filename}_{i}{tex_format}")
-                    controller.SaveTexture(texsave, out_tex_path)
+                    out_path = os.path.join(folder_path, f"{filename}_{i}{tex_ext}")
+                    controller.SaveTexture(texsave, out_path)
         else:
             texsave.slice.sliceIndex = 0
-            out_tex_path = os.path.join(folder_path, f"{filename}{tex_format}")
-            controller.SaveTexture(texsave, out_tex_path)
+            out_path = os.path.join(folder_path, f"{filename}{tex_ext}")
+            controller.SaveTexture(texsave, out_path)
 
+        print(f"  Saved: {os.path.basename(out_path)}  [{texture.width}x{texture.height} {texture.format.Name()}]")
         return True
 
     @staticmethod
-    def export_all_textures(capture_ctx, controller, folder_name):
+    def export_all_textures(capture_ctx, controller, save_dir: str, folder_name: str) -> int:
         """
-        导出所有纹理到指定目录
-        :param capture_ctx: RenderDoc CaptureContext 实例
-        :param controller: RenderDoc 控制器实例
-        :param folder_name: 导出目录名称
+        导出所有被用作着色器输入的纹理。
+        :param capture_ctx:  RenderDoc CaptureContext
+        :param controller:   ReplayController
+        :param save_dir:     导出根目录
+        :param folder_name:  子文件夹名称（通常为 capture 文件名）
         :return: 导出成功的纹理数量
         """
+        folder_path = os.path.join(save_dir, folder_name)
         resources = controller.GetResources()
         texture_count = 0
         for res in resources:
             if res.type == rd.ResourceType.Texture:
-                textureid = res.resourceId
-                
-                # 只导出输入资源类型的纹理
-                usages = controller.GetUsage(textureid)
-                for usage in usages:
-                    if usage.usage in INPUT_RESOURCE_USAGES:
-                        if TextureSaver.save_texture(capture_ctx, controller, textureid, folder_name, str(int(textureid))):
-                            texture_count += 1
-                        break
+                # 只导出被用作着色器输入资源的纹理
+                usages = controller.GetUsage(res.resourceId)
+                is_input = any(u.usage in INPUT_RESOURCE_USAGES for u in usages)
+                if not is_input:
+                    continue
+                # 使用资源名称作为文件名，回退到 ID
+                tex_name = res.name if res.name else str(int(res.resourceId))
+                if TextureSaver.save_texture(capture_ctx, controller, res.resourceId, folder_path, tex_name):
+                    texture_count += 1
         return texture_count
